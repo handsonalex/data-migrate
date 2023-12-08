@@ -5,3 +5,7 @@ spring:
     active: dev
   application:
     name: data-migrate
+
+#mybatis-plus:
+#  configuration:
+#    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
