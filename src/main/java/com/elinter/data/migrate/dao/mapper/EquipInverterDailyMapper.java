@@ -21,4 +21,16 @@ public interface EquipInverterDailyMapper extends BaseMapper<EquipInverterDaily>
 
     @Select("SELECT COUNT(id) FROM equip_inverter_daily")
     int getCount();
+
+    @Select("SELECT COUNT(*)  " +
+            "FROM ( " +
+            "    SELECT * " +
+            "    FROM ( " +
+            "        SELECT * " +
+            "        FROM equip_inverter_daily " +
+            "        LIMIT #{start},#{end} " +
+            "    ) a " +
+            "    GROUP BY a.sn, a.date " +
+            ") b;")
+    int getCountByGroup(@Param("start") Integer start,@Param("end") Integer end);
 }
