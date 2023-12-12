@@ -9,7 +9,7 @@ import java.util.concurrent.Semaphore;
 
 public interface EquipInverterDailyService extends IService<EquipInverterDaily> {
 
-    CompletableFuture<Integer> migrate(Integer start, Integer size, Date date, Semaphore semaphore);
+    CompletableFuture<Integer> migrate(Long start, Long end,Date date);
 
-    int preCalCount(Long count);
+    Long selectMaxId();
 }

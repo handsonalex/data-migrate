@@ -17,9 +17,9 @@ public class FailedRecord {
     @TableId(type = IdType.AUTO)
     private Long id;
 
-    private Integer start;
+    private Long start;
 
-    private Integer step;
+    private Long end;
 
     private Date operateTime;
 }
