@@ -1,5 +1,7 @@
 package com.elinter.data.migrate.controller;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.elinter.data.migrate.config.DataMigrateThreadPool;
 import com.elinter.data.migrate.dao.entity.FailedRecord;
 import com.elinter.data.migrate.service.EquipInverterDailyService;
 import com.elinter.data.migrate.service.FailedRecordService;
@@ -11,9 +13,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import javax.annotation.PostConstruct;
 import javax.annotation.Resource;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.List;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.*;
 import java.util.concurrent.*;
 
 /**
@@ -30,19 +32,21 @@ public class OperationController {
     @Resource
     private EquipInverterDailyService dailyService;
 
-//    private Long count = 10000000L;
     private Long count;
 
 
     @Resource
     private FailedRecordService failedRecordService;
 
+    @Resource
+    DataMigrateThreadPool threadPool;
+
     @GetMapping("/migrate")
     public String migrate(@RequestParam Integer step){
 
         long end = count;
         long start = end - step;
-        List<CompletableFuture<Integer>> futures = new ArrayList<>();
+        List<CompletableFuture<Map<Boolean,FailedRecord>>> futures = new ArrayList<>();
 
         long threadNum = count / step;
         if (threadNum % step != 0){
@@ -50,22 +54,15 @@ public class OperationController {
         }
         Date date = new Date();
         long startTime = System.currentTimeMillis();
+
         for (;threadNum > 0;threadNum--){
             if (start < 0){
                 start = 0;
             }
-            CompletableFuture<Integer> res = null;
-            try {
-                res = dailyService.migrate(start, end,date);
-            } catch (Exception e) {
-                FailedRecord failedRecord = new FailedRecord();
-                failedRecord.setStart(start);
-                failedRecord.setEnd(end);
-                failedRecord.setOperateTime(date);
-                failedRecordService.save(failedRecord);
-                log.error("插入错误日志 start:{}",start,e);
-            }
-
+            // 避免启动时候所有线程同一时间提交事务
+            setThreadInterval();
+            CompletableFuture<Map<Boolean,FailedRecord>> res;
+            res = dailyService.migrate(start, end,date);
             futures.add(res);
             end = start - 1;
             start -= step;
@@ -76,58 +73,116 @@ public class OperationController {
         // 阻塞直到所有任务完成
         allOf.join();
         long endTime = System.currentTimeMillis();
+        Map<Boolean,FailedRecord> resMap = new HashMap<>();
         int sum = 0;
-        try {
-            for (CompletableFuture<Integer> future : futures) {
-                sum += future.get();
+        for (CompletableFuture<Map<Boolean,FailedRecord>> future : futures) {
+            try {
+                resMap = future.get();
+            } catch (Exception e) {
+                log.error("获取结果失败", e);
             }
-        } catch (Exception e) {
-            log.error("获取结果失败", e);
+            if (resMap.get(false) != null){
+                failedRecordService.save(resMap.get(false));
+            }else if (resMap.get(true) != null){
+                sum += step;
+            }
         }
+
         log.info("Task took " + (endTime - startTime) / (60 * 1000) + " minutes.");
         return "已插入" + sum + "条数据";
     }
 
-    @GetMapping("/manual")
-    public String manual(@RequestParam Long start,@RequestParam Integer step,@RequestParam Long end){
-
-        List<CompletableFuture<Integer>> futures = new ArrayList<>();
-
-        long threadNum = end / step;
-        if (threadNum % step != 0){
-            threadNum++;
-        }
-        Date date = new Date();
-        for (;threadNum > 0;threadNum--){
-            CompletableFuture<Integer> res = null;
+    private void setThreadInterval() {
+        int interval = threadPool.getCorePoolSize();
+        if (interval != 0){
             try {
-                res = dailyService.migrate(start, end,date);
-            } catch (Exception e) {
-                FailedRecord failedRecord = new FailedRecord();
-                failedRecord.setStart(start);
-                failedRecord.setEnd(end);
-                failedRecord.setOperateTime(date);
-                failedRecordService.save(failedRecord);
-                log.error("插入错误日志 start:{}",start,e);
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
             }
+            interval--;
+        }
+    }
 
+    @GetMapping("/manual")
+    public String manual(@RequestParam String dateString){
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+        Date date = null;
+        try {
+            date = sdf.parse(dateString);
+        } catch (ParseException e) {
+            throw new RuntimeException(e);
+        }
+
+        List<FailedRecord> failedRecords = failedRecordService.list(new LambdaQueryWrapper<FailedRecord>().eq(FailedRecord::getOperateTime, date));
+        List<CompletableFuture<Map<Boolean,FailedRecord>>> futures = new ArrayList<>();
+
+
+        Date newDate = new Date();
+        for (FailedRecord failedRecord : failedRecords){
+            CompletableFuture<Map<Boolean,FailedRecord>> res = null;
+            setThreadInterval();
+            res = dailyService.migrate(failedRecord.getStart(), failedRecord.getEnd(),newDate);
             futures.add(res);
-            start =  start + step;
         }
 
         // 等待所有异步任务完成
         CompletableFuture<Void> allOf = CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
         // 阻塞直到所有任务完成
         allOf.join();
-        int sum = 0;
+        Map<Boolean,FailedRecord> resMap;
         try {
-            for (CompletableFuture<Integer> future : futures) {
-                sum += future.get();
-
+            for (CompletableFuture<Map<Boolean,FailedRecord>> future : futures) {
+                resMap = future.get();
+                if (resMap.get(false) != null){
+                    failedRecordService.save(resMap.get(false));
+                }else if (resMap.get(true) != null){
+                    failedRecordService.remove(new LambdaQueryWrapper<FailedRecord>()
+                            .eq(FailedRecord::getStart, resMap.get(true) .getStart())
+                            .eq(FailedRecord::getEnd, resMap.get(true) .getEnd())
+                            .eq(FailedRecord::getOperateTime, date));
+                }
             }
         } catch (Exception e) {
             log.error("获取结果失败", e);
         }
+        return "插入完成";
+    }
+
+    @GetMapping("/simpleMigrate")
+    public String simpleMigrate(@RequestParam Integer step){
+        long end = count;
+        long start = end - step;
+
+        long times = count / step;
+        if (times % step != 0){
+            times++;
+        }
+        Date date = new Date();
+        long startTime = System.currentTimeMillis();
+        List<Integer> list = new ArrayList<>();
+        for (;times > 0;times--){
+            if (start < 0){
+                start = 0;
+            }
+            int res = 0 ;
+            try {
+                res = dailyService.simpleMigrate(start, end,date);
+            } catch (Exception e) {
+                log.error("插入失败日志 start:{}  end:{}",start,end);
+                FailedRecord failedRecord = new FailedRecord();
+                failedRecord.setStart(start);
+                failedRecord.setEnd(end);
+                failedRecord.setOperateTime(date);
+                failedRecordService.save(failedRecord);
+            }
+            list.add(res);
+            end = start - 1;
+            start -= step;
+        }
+        long endTime = System.currentTimeMillis();
+        log.info("Task took " + (endTime - startTime) / (60 * 1000) + " minutes.");
+        int sum = list.stream().reduce(0,Integer::sum);
         return "已插入" + sum + "条数据";
     }
 

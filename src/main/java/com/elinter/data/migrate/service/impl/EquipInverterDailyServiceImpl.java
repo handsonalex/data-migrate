@@ -14,7 +14,9 @@ import org.springframework.transaction.interceptor.TransactionAspectSupport;
 
 import javax.annotation.Resource;
 import java.util.Date;
-import java.util.concurrent.*;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 @Service
 @Slf4j
@@ -30,18 +32,31 @@ public class EquipInverterDailyServiceImpl extends ServiceImpl<EquipInverterDail
     @Override
     @Async("asyncDataMigrate")
     @Transactional(rollbackFor = Exception.class)
-    public CompletableFuture<Integer> migrate(Long start, Long end,Date date) {
+    public CompletableFuture<Map<Boolean,FailedRecord>> migrate(Long start, Long end, Date date) {
         log.info(Thread.currentThread().getName() + ": 执行插入 start:{} end:{}",start,end);
-        int res = 0;
+        FailedRecord failedRecord = new FailedRecord();
+        Map<Boolean,FailedRecord> resMap = new HashMap<>();
+        resMap.put(true,failedRecord);
         try {
-            res = equipInverterDailyMapper.migrateData(start, end);
+            equipInverterDailyMapper.migrateData(start, end);
         } catch (Exception e) {
-            log.error("回滚 start:{}",start,e);
+            failedRecord.setStart(start);
+            failedRecord.setEnd(end);
+            failedRecord.setOperateTime(date);
+            resMap.put(false, failedRecord);
+            log.error("回滚 start:{} end:{}",start,end,e);
             TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
-            log.error("插入错误日志 start:{}",start,e);
-            insertFailedLog(start,end,date);
+            return CompletableFuture.completedFuture(resMap);
         }
-        return CompletableFuture.completedFuture(res);
+        return CompletableFuture.completedFuture(resMap);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public int simpleMigrate(Long start, Long end, Date date) {
+        log.info( "执行插入 start:{} end:{}",start,end);
+        return equipInverterDailyMapper.migrateData(start, end);
+
     }
 
     @Override
@@ -49,12 +64,4 @@ public class EquipInverterDailyServiceImpl extends ServiceImpl<EquipInverterDail
         return equipInverterDailyMapper.selectMaxId();
     }
 
-
-    private void insertFailedLog(Long start, Long end,Date date) {
-        FailedRecord failedRecord = new FailedRecord();
-        failedRecord.setStart(start);
-        failedRecord.setEnd(end);
-        failedRecord.setOperateTime(date);
-        failedRecordMapper.insert(failedRecord);
-    }
 }

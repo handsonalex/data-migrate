@@ -19,7 +19,7 @@ spring:
 async:
   executor:
     thread:
-      corePoolSize: 8
-      maxPoolSize: 8
+      corePoolSize: 4
+      maxPoolSize: 4
       queueCapacity: 2000
       namePrefix: data-migrate-
