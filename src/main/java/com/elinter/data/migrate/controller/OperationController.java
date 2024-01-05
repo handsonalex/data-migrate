@@ -54,18 +54,19 @@ public class OperationController {
         }
         Date date = new Date();
         long startTime = System.currentTimeMillis();
-
+        int interval = threadPool.getCorePoolSize();
         for (;threadNum > 0;threadNum--){
             if (start < 0){
                 start = 0;
             }
             // 避免启动时候所有线程同一时间提交事务
-            setThreadInterval();
+            setThreadInterval(interval);
             CompletableFuture<Map<Boolean,FailedRecord>> res;
             res = dailyService.migrate(start, end,date);
             futures.add(res);
             end = start - 1;
             start -= step;
+            interval--;
         }
 
         // 等待所有异步任务完成
@@ -89,19 +90,7 @@ public class OperationController {
         }
 
         log.info("Task took " + (endTime - startTime) / (60 * 1000) + " minutes.");
-        return "已插入" + sum + "条数据";
-    }
-
-    private void setThreadInterval() {
-        int interval = threadPool.getCorePoolSize();
-        if (interval != 0){
-            try {
-                Thread.sleep(1000);
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
-            interval--;
-        }
+        return "数据迁移完成";
     }
 
     @GetMapping("/manual")
@@ -119,10 +108,11 @@ public class OperationController {
 
 
         Date newDate = new Date();
+        int interval = threadPool.getCorePoolSize();
         for (FailedRecord failedRecord : failedRecords){
-            CompletableFuture<Map<Boolean,FailedRecord>> res = null;
-            setThreadInterval();
-            res = dailyService.migrate(failedRecord.getStart(), failedRecord.getEnd(),newDate);
+            setThreadInterval(interval);
+            CompletableFuture<Map<Boolean,FailedRecord>> res = dailyService.migrate(failedRecord.getStart(), failedRecord.getEnd(),newDate);
+            interval--;
             futures.add(res);
         }
 
@@ -183,7 +173,8 @@ public class OperationController {
         long endTime = System.currentTimeMillis();
         log.info("Task took " + (endTime - startTime) / (60 * 1000) + " minutes.");
         int sum = list.stream().reduce(0,Integer::sum);
-        return "已插入" + sum + "条数据";
+        log.info("插入{}条数据",sum);
+        return "数据迁移完成";
     }
 
     @PostConstruct
@@ -191,6 +182,16 @@ public class OperationController {
         log.info("预获取原表最大id");
         count = dailyService.selectMaxId();
         log.info("maxId = {}",count);
+    }
+
+    private void setThreadInterval(int interval) {
+        if (interval != 0){
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+        }
     }
 
 

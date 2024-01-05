@@ -7,7 +7,6 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
-import java.util.List;
 
 @Mapper
 public interface EquipInverterDailyMapper extends BaseMapper<EquipInverterDaily> {
@@ -16,9 +15,10 @@ public interface EquipInverterDailyMapper extends BaseMapper<EquipInverterDaily>
             "( " +
             "SELECT a.sn,ANY_VALUE(a.pac) as pac,ANY_VALUE(a.etoday) as eToday," +
             "ANY_VALUE(a.etotal) as eTotal,ANY_VALUE(a.station_id) as stationId,a.`date`," +
-            "(IF(MAX(a.update_time) IS NULL, now(), MAX(a.update_time) )) as updateTime " +
-            "FROM (SELECT * FROM equip_inverter_daily_old where id between #{start} and #{end} ) a " +
-            "GROUP BY a.sn,a.date ORDER BY updateTime DESC) "
+            "ANY_VALUE ( a.update_time ) AS updateTime " +
+            "FROM (SELECT DISTINCT sn,pac,etoday,etotal,station_id,date,(IF(update_time IS NULL, now(), update_time)) AS update_time " +
+            "FROM equip_inverter_daily_old where id between #{start} and #{end} ORDER BY update_time desc ) a " +
+            "GROUP BY a.sn,a.date ORDER BY update_time DESC) "
             )
     int migrateData(@Param("start") Long start,@Param("end") Long end);
 

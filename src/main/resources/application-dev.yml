@@ -23,3 +23,7 @@ async:
       maxPoolSize: 4
       queueCapacity: 2000
       namePrefix: data-migrate-
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
